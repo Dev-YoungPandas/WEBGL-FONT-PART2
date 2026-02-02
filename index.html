@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eva Sánchez - VERTICAL</title>
+    <title>Eva Sánchez - Perfect Ripple Effect</title>
     <style>
         * {
             margin: 0;
@@ -41,7 +41,7 @@
 </head>
 <body>
     <canvas id="canvas"></canvas>
-    <div class="info">Hover - VERTICAL</div>
+    <div class="info">Eva Sánchez - Perfect Ripple</div>
 
     <script>
         const canvas = document.getElementById('canvas');
@@ -62,16 +62,46 @@
         canvas.style.height = '500px';
         gl.viewport(0, 0, canvas.width, canvas.height);
 
+        // Create text with individual letter positions
+        const text = 'Eva Sánchez';
         const textCanvas = document.createElement('canvas');
         const ctx = textCanvas.getContext('2d');
         textCanvas.width = 1400 * dpr;
         textCanvas.height = 500 * dpr;
 
-        ctx.fillStyle = '#000000';
-        ctx.font = `900 ${160 * dpr}px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+        const fontSize = 160 * dpr;
+        ctx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('Eva Sanchez', textCanvas.width / 2, textCanvas.height / 2);
+        ctx.fillStyle = '#000000';
+
+        // Measure and store letter positions
+        const letterPositions = [];
+        const centerX = textCanvas.width / 2;
+        const centerY = textCanvas.height / 2;
+        
+        // Get total text width
+        const totalWidth = ctx.measureText(text).width;
+        let currentX = centerX - totalWidth / 2;
+
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            const charWidth = ctx.measureText(char).width;
+            
+            // Store letter info (in normalized 0-1 coordinates for canvas)
+            letterPositions.push({
+                char: char,
+                x: currentX + charWidth / 2, // center of letter
+                width: charWidth,
+                normalizedX: (currentX + charWidth / 2) / textCanvas.width,
+                normalizedWidth: charWidth / textCanvas.width
+            });
+            
+            currentX += charWidth;
+        }
+
+        // Draw all letters
+        ctx.fillText(text, centerX, centerY);
 
         const texture = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -92,40 +122,59 @@
             }
         `;
 
-        // SAME EFFECT - Just VERTICAL instead of horizontal
+        // FIXED - Complete blank vertical gap with perfect ripple effect
         const fragmentShaderSource = `
             precision highp float;
             
             uniform sampler2D tMap;
             uniform float uTime;
-            uniform float uMouseT;
-            uniform float uMouse;
+            uniform float uHoverIntensity;
+            uniform float uHoverX;
+            uniform float uHoverWidth;
             
             varying vec2 vUv;
             
             float ripple(float uv, float time, float prog) {
                 float distance = length(((uv) + (time * 2.)));
-                return tan(distance * (1.)) * (prog * -1.85);
+                return tan(distance * (1.)) * (prog * -2.85);
             }
             
             void main() {
-                // VERTICAL (using X coordinate instead of Y)
-                float rippleUV2 = ripple(vUv.x, uMouse, uMouseT) * (0.0006 * uMouseT);
+                // Smoother distance calculation from hovered letter
+                float distanceFromHover = abs(vUv.x - uHoverX);
+                float letterRange = uHoverWidth * 1.8;
                 
-                // Apply ripple to X coordinate for VERTICAL effect
+                // Smooth quadratic falloff for better transitions
+                float localIntensity = 0.0;
+                if (distanceFromHover < letterRange) {
+                    float normalizedDist = distanceFromHover / letterRange;
+                    // Quadratic easing for smoother effect
+                    localIntensity = uHoverIntensity * (1.1 - normalizedDist * normalizedDist);
+                }
+                
+                // Ripple effect
+                float rippleUV2 = ripple(vUv.x * 40.0, uHoverX, localIntensity) * (0.0018 * localIntensity);
+                
                 vec2 U = vec2(rippleUV2 + vUv.x, vUv.y);
                 
                 float distor = 1.0;
                 
-                // Sample texture with displacement
                 float r = texture2D(tMap, vec2(U.x * distor, U.y / distor)).r;
                 float g = texture2D(tMap, vec2(U.x, U.y)).g * (distor);
                 float b = texture2D(tMap, vec2(U.x, U.y)).b * (distor + (1.6 * (distor - 1.0)));
                 float a = texture2D(tMap, vec2(U.x, U.y)).a;
                 
                 gl_FragColor = vec4(r, g, b, a);
-                // Reduce alpha where ripple is strong
-                gl_FragColor.a -= abs(rippleUV2) * (0.5);
+                
+                // FIXED: Complete blank gap - increased multiplier for complete transparency
+                // This creates a perfect vertical blank gap where the ripple occurs
+                float gapIntensity = abs(rippleUV2) * 2.2;
+                gl_FragColor.a -= gapIntensity;
+                
+                // Ensure complete transparency in gap area
+                if (gapIntensity > 0.5) {
+                    gl_FragColor.a = 0.0;
+                }
             }
         `;
 
@@ -180,35 +229,81 @@
 
         const tMap = gl.getUniformLocation(program, 'tMap');
         const uTime = gl.getUniformLocation(program, 'uTime');
-        const uMouseT = gl.getUniformLocation(program, 'uMouseT');
-        const uMouse = gl.getUniformLocation(program, 'uMouse');
+        const uHoverIntensity = gl.getUniformLocation(program, 'uHoverIntensity');
+        const uHoverX = gl.getUniformLocation(program, 'uHoverX');
+        const uHoverWidth = gl.getUniformLocation(program, 'uHoverWidth');
 
-        let mouse = 0.0;
-        let targetMouse = 0.0;
-        let mouseT = 0.0;
-        let targetMouseT = 0.0;
+        let hoverIntensity = 1.0;
+        let targetHoverIntensity = 1.0;
+        let hoverX = 1.0;
+        let targetHoverX = 1.0;
+        let hoverWidth = 0.1;
+        
+        // Auto-play variables
+        let autoPlayActive = true;
+        let autoPlayStartTime = Date.now();
+        const autoPlayDuration = 2500;
+        
+        setTimeout(() => {
+            autoPlayActive = false;
+            targetHoverIntensity = 0.0;
+        }, autoPlayDuration);
 
-        canvas.addEventListener('mouseenter', () => {
-            targetMouseT = 1.0;
-        });
+        // Mouse tracking for per-letter detection
+        let currentHoveredLetter = null;
 
         canvas.addEventListener('mousemove', (e) => {
             const rect = canvas.getBoundingClientRect();
-            // X coordinate for VERTICAL effect
-            targetMouse = (e.clientX - rect.left) / rect.width;
+            const mouseX = (e.clientX - rect.left) / rect.width;
+            const mouseY = (e.clientY - rect.top) / rect.height;
+            
+            if (!autoPlayActive) {
+                // Find which letter is being hovered
+                let foundLetter = null;
+                for (let i = 0; i < letterPositions.length; i++) {
+                    const letter = letterPositions[i];
+                    const halfWidth = letter.normalizedWidth / 2;
+                    
+                    if (Math.abs(mouseX - letter.normalizedX) < halfWidth * 1.5) {
+                        foundLetter = letter;
+                        break;
+                    }
+                }
+                
+                if (foundLetter) {
+                    currentHoveredLetter = foundLetter;
+                    targetHoverIntensity = 1.0;
+                    targetHoverX = foundLetter.normalizedX;
+                    hoverWidth = foundLetter.normalizedWidth;
+                } else {
+                    currentHoveredLetter = null;
+                    targetHoverIntensity = 0.0;
+                }
+            }
         });
 
         canvas.addEventListener('mouseleave', () => {
-            targetMouseT = 0.0;
+            if (!autoPlayActive) {
+                currentHoveredLetter = null;
+                targetHoverIntensity = 0.0;
+            }
         });
 
         let time = 0;
         function animate() {
-            time += 0.016;
+            time += 0.16;
             
-            // Smooth interpolation
-            mouse += (targetMouse - mouse) * 0.1;
-            mouseT += (targetMouseT - mouseT) * 0.12;
+            // Auto-play: sweep right to left
+            if (autoPlayActive) {
+                const elapsed = Date.now() - autoPlayStartTime;
+                const progress = Math.min(elapsed / autoPlayDuration, 1.0);
+                targetHoverX = 1.0 - progress;
+                hoverWidth = 0.4;
+            }
+            
+            // Smoother interpolation
+            hoverX += (targetHoverX - hoverX) * 0.08;
+            hoverIntensity += (targetHoverIntensity - hoverIntensity) * 0.06;
 
             gl.clearColor(0.92, 0.92, 0.92, 1.0);
             gl.clear(gl.COLOR_BUFFER_BIT);
@@ -221,8 +316,9 @@
 
             gl.uniform1i(tMap, 0);
             gl.uniform1f(uTime, time);
-            gl.uniform1f(uMouseT, mouseT);
-            gl.uniform1f(uMouse, mouse);
+            gl.uniform1f(uHoverIntensity, hoverIntensity);
+            gl.uniform1f(uHoverX, hoverX);
+            gl.uniform1f(uHoverWidth, hoverWidth);
 
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
